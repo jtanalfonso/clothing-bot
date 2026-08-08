@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 from playwright.sync_api import sync_playwright
+import json
 
 # Grailed API endpoint and application ID
 URL = "https://mnrwefss2q-dsn.algolia.net/1/indexes/*/queries"
@@ -62,18 +63,26 @@ def fetch_key(search_query="isamu katayama backlash", timeout=15, headless=False
 # Asynchronous function to make a request to the Grailed API using the captured API key
 async def main(key):
   headers = {
-  "Content-Type": "application/x-www-form-urlencoded",
   "X-Algolia-Application-Id": GRAILED_APP_ID,
   "X-Algolia-Api-Key": key
   }
   
+  new_listing_found = False
+
+  # Load seen.json
+  try:
+    with open("seen.json", 'r', encoding="utf-8") as file:
+      seen = json.load(file)
+  except FileNotFoundError: # First-ever run
+    seen = {}
+
   # Make an asynchronous POST request to the Grailed API
   async with aiohttp.ClientSession() as session:
     async with session.post(URL, headers=headers, json=PAYLOAD) as response:
       print("Status: ", response.status)  
 
       if response.status != 200:
-        exit()
+        return
 
       # Parse the JSON response and extract the listing hits
       data = await response.json()
@@ -81,9 +90,22 @@ async def main(key):
 
       # Print the URLs of the listings retrieved from the API response
       for item in hits:
-        listing_id = item["id"]
-        listing_url = f"https://www.grailed.com/listings/{listing_id}"
-        print(listing_url)
+        listing_id = str(item["id"])
+
+        if listing_id in seen:
+          continue
+        else:
+          seen[listing_id] = True
+          new_listing_found = True
+          listing_url = f"https://www.grailed.com/listings/{listing_id}"
+          print(listing_url)
+
+      # Write new seen dict to seen.json if new listings were found
+      if new_listing_found:
+        with open("seen.json", "w", encoding="utf-8") as file:
+          json.dump(seen, file, indent=2)
+      else:
+        print("No new listings found")
 
 if __name__ == "__main__":
   api_key = fetch_key()
