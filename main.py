@@ -18,7 +18,7 @@ PAYLOAD = {
 }
 
 # Function to fetch an API key from Grailed using Playwright
-def fetch_key(search_query="isamu katayama backlash", timeout=15, headless=False):
+def fetch_key(search_query="isamu katayama backlash", timeout=15, headless=True):
   key = None
 
   # Request handler to capture the API key from network requests
@@ -37,8 +37,18 @@ def fetch_key(search_query="isamu katayama backlash", timeout=15, headless=False
 
   # Use Playwright to open a browser and navigate to Grailed
   with sync_playwright() as p:
-    browser = p.chromium.launch(headless=headless)
-    page = browser.new_page()
+    browser = p.chromium.launch(
+      headless=headless
+      )
+    context = browser.new_context(
+      user_agent=(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+      )
+    )
+
+    page = context.new_page()
     page.on("request", handle_request)  # Register request handler to capture API key from network requests
 
     # Navigate to Grailed search page with the specified query
