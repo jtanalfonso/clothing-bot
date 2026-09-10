@@ -1,31 +1,22 @@
 import asyncio
+import json
+from urllib.parse import urlencode
 
 import aiohttp
 from playwright.sync_api import sync_playwright
 
 import seen_listings
-
-SEEN_FILE = "seen_grailed.json"
+from config import BRANDS
 
 # Algolia API endpoint and Grailed application ID
 URL = "https://mnrwefss2q-dsn.algolia.net/1/indexes/*/queries"
 GRAILED_APP_ID = "MNRWEFSS2Q"
 
-# Payload sent to Algolia - searches the "Listing_by_date_added_production" index for the given query string
-PAYLOAD = {
-  "requests": [
-    {
-      "indexName": "Listing_by_date_added_production",
-      "params": "query=isamu katayama backlash&hitsPerPage=40&page=0"
-    }
-  ]
-}
-
-# Algolia API key, shared across poll_listings() calls
-# Populated on first poll_listings() call, reset to None if a poll gets a bad response, fresh key is fetched on the next poll
+# Algolia API key, shared across poll() calls for every brand
+# Populated on first poll() call, reset to None if a poll gets a bad response, fresh key is fetched on the next poll
 api_key = None
 
-def fetch_key(search_query="isamu katayama backlash", timeout = 20):
+def fetch_key(search_query, timeout = 20):
   """
   Launches a headless browser via Playwright, visits Grailed's search page,
   inspects outgoing network requests for ones going to Algolia's index endpoint.
@@ -33,8 +24,10 @@ def fetch_key(search_query="isamu katayama backlash", timeout = 20):
 
   Returns captured API key. or raises an Exception if none is found within the timeout window.
 
+  The captured key is reused for every configured brand's queries. 
+
   Parameters:
-    search_query: The search term to submit on Grailed
+    search_query: The search term to submit on Grailed to trigger the request the key is read from
     timeout: Maximum time, in seconds, to wait for the API key to be captured before giving up. Exception is raised
   
   Returns:
@@ -108,42 +101,73 @@ async def get_api_key():
     Exception: If no API key is captured within the timeout window
   """
   loop = asyncio.get_running_loop()
-  return await loop.run_in_executor(None, fetch_key)
+  return await loop.run_in_executor(None, fetch_key, "shirts")  # Arbitrary search query to fetch a key
 
-async def poll(bot, channel_id):
+def build_payload(query):
   """
-  Polls Grailed's Algolia search endpoint for listings matching PAYLOAD's query and posts any newly seen 
-  listing URLs to the configured Discord channel.
+  Builds the Algolia request payload for searching Grailed. Searches Grailed's "Listing_by_date_added_production" index by date added.
 
-  Fetches and caches a fresh API key if one isn't already cached. If Algolia rejects the request, the cached
-  key is cleared so the next run fetches a new one, and the cycle is skipped.
+  Encodes the query params into a URL-encoded string, then swaps "+" back to literal spaces.
+
+  Always requests page 0 with 40 hits per page.
+
+  Parameters:
+    query: The search term to query the index with.
+
+  Returns:
+    A dict formatted s an Algolia query request body, with a single request targeting the "Listing_by_date_added_production" index.
+  """
+  params = {
+  "query": query,
+  "hitsPerPage": 40,
+  "page": 0
+  }
+
+  return {
+    "requests": [
+      {
+        "indexName": "Listing_by_date_added_production",
+        "params": urlencode(params).replace("+", " ")
+      }
+    ]
+  }
+
+async def poll(bot, brand):
+  """
+  Polls Grailed's Algolia search endpoint for the given brand's query and posts any newly seen listing URLS to the brand's configured Discord channel.
+
+  Fetches and caches a fresh API key if one isn't already cached (the key is shared across every brand, since it isn't query-specific). If Algolia rejects the request, the cached key is cleared so the next run fetches a new one, and the cycle is skipped.
 
   Args:
     bot: The running discord.py bot instance.
-    channel_id: ID of the Discord channel to post new listings to.
+    brand: A dict from config.BRANDS, containing "name", "grailed_query", and "channel_id" keys
   """
   global api_key
 
-  channel = bot.get_channel(channel_id)
+  channel = bot.get_channel(brand["channel_id"])
   if channel is None:
-    print("Channel not found.")
+    print(f"Grailed - Channel not found for {brand['name']}.")
     return
 
   # Fetch and cache a key if we don't have one yet
   if api_key is None:
     api_key = await get_api_key()
 
+  query = brand.get("grailed_query")
+
   headers = {
     "X-Algolia-Application-Id": GRAILED_APP_ID,
     "X-Algolia-Api-Key": api_key
     }
+  payload = build_payload(query)
+  seen_path = seen_listings.seen_file("grailed", brand["name"])
 
-  seen = seen_listings.load_seen(SEEN_FILE)
+  seen = seen_listings.load_seen(seen_path)
   new_listing_found = False
 
-  # Query Algolia directly for the latest listings matching PAYLOAD
+  # Query Algolia directly for the latest listings matching this brand's query
   async with aiohttp.ClientSession() as session:
-    async with session.post(URL, headers=headers, json=PAYLOAD) as response:
+    async with session.post(URL, headers=headers, json=payload) as response:
       # Treat a bad response as a sign the cached key is invalid. Clear it so the next poll fetches a fresh one
       if response.status != 200:
         print(f"Grailed - Status: {response.status} - Refreshing API key")
@@ -165,8 +189,8 @@ async def poll(bot, channel_id):
         await channel.send(listing_url)
 
   if new_listing_found:
-    seen_listings.save_seen(SEEN_FILE, seen)
+    seen_listings.save_seen(seen_path, seen)
   else:
-    print("Grailed - No new listings found")
+    print(f"Grailed - No new listings found for {brand['name']}")
 
     

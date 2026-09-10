@@ -3,33 +3,28 @@ from mercapi.requests import SearchRequestData
 
 import seen_listings
 
-SEEN_FILE = "seen_mercari.json"
-
-# ISAMUKATAYAMA BACKLASH, ISAMU KATAYAMA, BACKLASH
-BRAND_IDS = [5808, 15421, 11072]
-
-async def poll(bot, channel_id):
+async def poll(bot, brand):
   """
-  Polls mercari.jp for new listings and post any unseen ones to the configured Discord channel.
-  Searches by brand ID only (empty keyword), sorted newest-first. 
+  Polls mercari.jp for new listings matching the given brand and posts any unseen ones to the brand's configured Discord channel. Searches by brand ID only (empty keyword), sorted newest-first.
 
   Args:
     bot: The running discord.py bot instance.
-    channel_id: ID of the Discord channel to post new listings to.
+    brand: A dict from config.BRANDS with "name", "channel_id", and "mercari_brand_ids" keys.
   """
-  channel = bot.get_channel(channel_id)
+  channel = bot.get_channel(brand["channel_id"])
   if channel is None:
-    print("Mercari - Channel not found.")
+    print(f"Mercari - Channel not found for {brand['name']}.")
     return
 
-  seen = seen_listings.load_seen(SEEN_FILE)
+  seen_path = seen_listings.seen_file("mercari", brand["name"])
+  seen = seen_listings.load_seen(seen_path)
   new_listing_found = False
 
   m = Mercapi()
 
   results = await m.search(
       '',                              # Empty - filters by brand id
-      brands=BRAND_IDS,
+      brands=brand["mercari_brand_ids"],
       sort_by=SearchRequestData.SortBy.SORT_CREATED_TIME,
       sort_order=SearchRequestData.SortOrder.ORDER_DESC,
   )
@@ -46,6 +41,6 @@ async def poll(bot, channel_id):
     await channel.send(listing_url)
 
   if new_listing_found:
-    seen_listings.save_seen(SEEN_FILE, seen)
+    seen_listings.save_seen(seen_path, seen)
   else:
-    print("Mercari - No new listings found")
+    print(f"Mercari - No new listings found for {brand['name']}")

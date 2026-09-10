@@ -2,7 +2,7 @@
 .env
 
 # Bot state
-seen.json
+seen_*.json
 
 # macOS
 .DS_Store

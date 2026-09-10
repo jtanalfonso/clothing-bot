@@ -6,13 +6,11 @@ from dotenv import load_dotenv
 
 import grailed
 import mercari
+from config import BRANDS
 
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
-
-TOKEN = os.getenv("BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))  # Defaults to 0 if unset
 
 POLL_LISTINGS_INTERVAL_MINS = 5 # Refresh every 5 mins
 
@@ -22,13 +20,15 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @tasks.loop(minutes=POLL_LISTINGS_INTERVAL_MINS)
 async def poll_mercari():
-  """Polls mercari.jp for new listings and posts to CHANNEL_ID."""
-  await mercari.poll(bot, CHANNEL_ID)
+  """Polls mercari.jp for each configured brand and posts new listings to its channel."""
+  for brand in BRANDS:
+    await mercari.poll(bot, brand)
 
 @tasks.loop(minutes=POLL_LISTINGS_INTERVAL_MINS)
 async def poll_grailed():
-  """Polls Grailed for new listings and posts to CHANNEL_ID"""
-  await grailed.poll(bot, CHANNEL_ID)
+  """Polls Grailed for each configured brand and posts new listings to its channel."""
+  for brand in BRANDS:
+    await grailed.poll(bot, brand)
 
 @poll_mercari.before_loop
 async def before_poll_mercari():
