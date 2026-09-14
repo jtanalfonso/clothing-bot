@@ -1,8 +1,8 @@
 import asyncio
-import json
 from urllib.parse import urlencode
 
 import aiohttp
+import discord
 from playwright.sync_api import sync_playwright
 
 import seen_listings
@@ -12,13 +12,14 @@ from config import BRANDS
 URL = "https://mnrwefss2q-dsn.algolia.net/1/indexes/*/queries"
 GRAILED_APP_ID = "MNRWEFSS2Q"
 
-# Algolia API key, shared across poll() calls for every brand
-# Populated on first poll() call, reset to None if a poll gets a bad response, fresh key is fetched on the next poll
+# Cached Algolia API key shared across all brand polls.
+# Fetched on the first poll, then reused until Algolia rejects it.
+# When rejected, the key is set to None so the next poll fetches a new one.
 api_key = None
 
 def fetch_key(search_query, timeout = 20):
   """
-  Launches a headless browser via Playwright, visits Grailed's search page,
+  Launches a headless browser via Playwright, visits Grailed's search page, and
   inspects outgoing network requests for ones going to Algolia's index endpoint.
   Captures public Algolia search API key which is used for our own direct API calls.
 
@@ -115,7 +116,7 @@ def build_payload(query):
     query: The search term to query the index with.
 
   Returns:
-    A dict formatted s an Algolia query request body, with a single request targeting the "Listing_by_date_added_production" index.
+    A dict formatted as an Algolia query request body, with a single request targeting the "Listing_by_date_added_production" index.
   """
   params = {
   "query": query,
@@ -131,6 +132,32 @@ def build_payload(query):
       }
     ]
   }
+
+def build_embed(item, listing_id):
+  """
+  Builds a Discord embed for a single Grailed listing:
+  Cover image, title, price, and size.
+
+  Args:
+    item: A single hit dict from Algolia's response - one entry of data["results"][0]["hits"].
+    listing_id: This listing's ID.
+  
+  Returns:
+    A discord.Embed ready to send via channel.send(embed=...).
+  """
+  listing_url = f"https://www.grailed.com/listings/{listing_id}"
+  title = item["title"]
+  price = f"${item['price']}"
+  size = item["size"]
+  cover_image_url = item["cover_photo"]["image_url"]
+
+  embed = discord.Embed(title=title, url=listing_url)
+  embed.set_image(url=cover_image_url)
+  embed.add_field(name="Site", value="Grailed", inline=True)
+  embed.add_field(name="Price", value=price, inline=True)
+  embed.add_field(name="Size", value=size, inline=True)
+
+  return embed
 
 async def poll(bot, brand):
   """
@@ -185,8 +212,9 @@ async def poll(bot, brand):
 
         seen[listing_id] = True
         new_listing_found = True
-        listing_url = f"https://www.grailed.com/listings/{listing_id}"
-        await channel.send(listing_url)
+      
+        embed = build_embed(item, listing_id)
+        await channel.send(embed=embed)
 
   if new_listing_found:
     seen_listings.save_seen(seen_path, seen)

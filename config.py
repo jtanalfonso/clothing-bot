@@ -41,7 +41,14 @@ BRANDS = [
     "channel_id": 1547510041182212176,
     "grailed_query": "beauty beast",
     # beauty:beast
-      "mercari_brand_ids": [5186]
+    "mercari_brand_ids": [5186]
+  },
+  {
+    "name": "Dior Homme",
+    "channel_id": 1548094224396714085,
+    "grailed_query": "dior homme",
+    # Dior Homme
+    "mercari_brand_ids": [7331]
   },
   {
     "name": "GOA",

@@ -3,6 +3,7 @@
 
 # Bot state
 seen_*.json
+seen/
 
 # macOS
 .DS_Store

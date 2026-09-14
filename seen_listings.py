@@ -1,5 +1,9 @@
 import json
+import os
 import re
+
+# All seen-listings JSON files live under this folder.
+SEEN_DIR = "seen"
 
 def load_seen(path):
   """
@@ -23,15 +27,16 @@ def save_seen(path, seen):
 
   Args:
     path: Path to the site's seen-listings JSON file.
-    seen: Dict mapping listing ID strings to TRue, as returned by load_seen().
+    seen: Dict mapping listing ID strings to True, as returned by load_seen().
   """
   with open(path, "w", encoding="utf-8") as f:
     json.dump(seen, f, indent=2)
 
 def seen_file(prefix, brand_name):
   """
-  Builds the seen-listings file path for a given site and brand. 
-  seen_file("grailed", "Isamu Katayama Backlash") -> "seen_grailed_isamu_katayama_backlash.json"
+  Builds the seen-listings file path for a given site and brand, inside SEEN_DIR.
+
+  seen_file("grailed", "Isamu Katayama Backlash") -> "seen/seen_grailed_isamu_katayama_backlash.json"
 
   Args:
     prefix: Site identifier used as a filename prefix
@@ -40,5 +45,7 @@ def seen_file(prefix, brand_name):
   Returns:
     Path string for that site+brand's seen-listings file.
   """
+
   slug = re.sub(r"[^a-z0-9]+", "_", brand_name.lower()).strip("_")
-  return f"seen_{prefix}_{slug}.json"
+  filename = f"seen_{prefix}_{slug}.json"
+  return os.path.join(SEEN_DIR, filename)
