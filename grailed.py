@@ -1,4 +1,5 @@
 import asyncio
+import json
 from urllib.parse import urlencode
 
 import aiohttp
@@ -6,7 +7,6 @@ import discord
 from playwright.sync_api import sync_playwright
 
 import seen_listings
-from config import BRANDS
 
 # Algolia API endpoint and Grailed application ID
 URL = "https://mnrwefss2q-dsn.algolia.net/1/indexes/*/queries"
@@ -104,34 +104,38 @@ async def get_api_key():
   loop = asyncio.get_running_loop()
   return await loop.run_in_executor(None, fetch_key, "shirts")  # Arbitrary search query to fetch a key
 
-def build_payload(query):
+def build_payload(query, designer_ids=None):
   """
-  Builds the Algolia request payload for searching Grailed. Searches Grailed's "Listing_by_date_added_production" index by date added.
-
-  Encodes the query params into a URL-encoded string, then swaps "+" back to literal spaces.
-
-  Always requests page 0 with 40 hits per page.
+  Builds independent Grailed Algolia searches for a keyword and/or designer IDs.
+  Matches from either search will be combined when poll() processes the results.
+  Each search returns the 40 newest marching listings (page 0).
 
   Parameters:
-    query: The search term to query the index with.
+    query: Optional free-text search term.
+    designer_ids: Optional Grailed designer IDs.
 
   Returns:
-    A dict formatted as an Algolia query request body, with a single request targeting the "Listing_by_date_added_production" index.
+    An Algolia multi-query request body.
   """
-  params = {
-  "query": query,
-  "hitsPerPage": 40,
-  "page": 0
-  }
+  requests = []
+  index_name = "Listing_by_date_added_production"
 
-  return {
-    "requests": [
-      {
-        "indexName": "Listing_by_date_added_production",
-        "params": urlencode(params).replace("+", " ")
-      }
-    ]
-  }
+  if query:
+    params = {"query": query, "hitsPerPage": 40, "page": 0}
+    requests.append({"indexName": index_name, "params": urlencode(params)})
+
+  if designer_ids:
+    # All designer IDs are alternatives (OR), not extra keyword restrictions.
+    designer_filters = [[f"designers.id:{designer_id}" for designer_id in designer_ids]]
+    params = {
+      "query": "",
+      "hitsPerPage": 40,
+      "page": 0,
+      "facetFilters": json.dumps(designer_filters),
+    }
+    requests.append({"indexName": index_name, "params": urlencode(params)})
+
+  return {"requests": requests}
 
 def build_embed(item, listing_id):
   """
@@ -139,7 +143,7 @@ def build_embed(item, listing_id):
   Cover image, title, price, and size.
 
   Args:
-    item: A single hit dict from Algolia's response - one entry of data["results"][0]["hits"].
+    item: A single hit dict from an Algolia result's "hits" array.
     listing_id: This listing's ID.
   
   Returns:
@@ -161,13 +165,13 @@ def build_embed(item, listing_id):
 
 async def poll(bot, brand):
   """
-  Polls Grailed's Algolia search endpoint for the given brand's query and posts any newly seen listing URLS to the brand's configured Discord channel.
+  Searches by keyword and Grailed designer ID independently, then posts the combined unseen listings to the brand's configured Discord channel.
 
   Fetches and caches a fresh API key if one isn't already cached (the key is shared across every brand, since it isn't query-specific). If Algolia rejects the request, the cached key is cleared so the next run fetches a new one, and the cycle is skipped.
 
   Args:
     bot: The running discord.py bot instance.
-    brand: A dict from config.BRANDS, containing "name", "grailed_query", and "channel_id" keys
+    brand: A dict from config.BRANDS with "name", "channel_id", optional "grailed_query", and optional "grailed_designer_ids" keys.
   """
   global api_key
 
@@ -176,23 +180,28 @@ async def poll(bot, brand):
     print(f"Grailed - Channel not found for {brand['name']}.")
     return
 
+  query = brand.get("grailed_query")
+  designer_ids = brand.get("grailed_designer_ids") or []
+  if not query and not designer_ids:
+    print(f"Grailed - No query or designer IDs configured for {brand['name']}; skipping.")
+    return
+
   # Fetch and cache a key if we don't have one yet
   if api_key is None:
     api_key = await get_api_key()
-
-  query = brand.get("grailed_query")
 
   headers = {
     "X-Algolia-Application-Id": GRAILED_APP_ID,
     "X-Algolia-Api-Key": api_key
     }
-  payload = build_payload(query)
+  payload = build_payload(query, designer_ids)
   seen_path = seen_listings.seen_file("grailed", brand["name"])
 
   seen = seen_listings.load_seen(seen_path)
   new_listing_found = False
 
-  # Query Algolia directly for the latest listings matching this brand's query
+  # A single HTTP request batches both searches
+  # # Each result contains its own hits.
   async with aiohttp.ClientSession() as session:
     async with session.post(URL, headers=headers, json=payload) as response:
       # Treat a bad response as a sign the cached key is invalid. Clear it so the next poll fetches a fresh one
@@ -202,19 +211,21 @@ async def poll(bot, brand):
         return
 
       data = await response.json()
-      hits = data["results"][0]["hits"]
-
-      for item in hits:
-        listing_id = str(item["id"])  # Convert listing IDs to string to match seen.json keys
-
-        if listing_id in seen:
+      for result in data["results"]:
+        if result.get("status", 200) != 200 or "hits" not in result:
+          print(f"Grailed - Search failed for {brand['name']}: {result}")
           continue
 
-        seen[listing_id] = True
-        new_listing_found = True
-      
-        embed = build_embed(item, listing_id)
-        await channel.send(embed=embed)
+        for item in result["hits"]:
+          listing_id = str(item["id"])  # Same ID in either search only posts once.
+
+          if listing_id in seen:
+            continue
+
+          embed = build_embed(item, listing_id)
+          await channel.send(embed=embed)
+          seen[listing_id] = True
+          new_listing_found = True
 
   if new_listing_found:
     seen_listings.save_seen(seen_path, seen)

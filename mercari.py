@@ -79,11 +79,11 @@ async def build_embed(item):
 
 async def poll(bot, brand):
   """
-  Polls mercari.jp for new listings matching the given brand and posts any unseen ones to the brand's configured Discord channel. Searches by brand ID only (empty keyword), sorted newest-first.
+  Polls mercari.jp for new listings. Uses brand IDs when available, otherwise searches by mercari_query (or the brand name). Results are newest-first.
 
   Args:
     bot: The running discord.py bot instance.
-    brand: A dict from config.BRANDS with "name", "channel_id", and "mercari_brand_ids" keys.
+    brand: A dict from config.BRANDS with "name", "channel_id", optional "mercari_brand_ids", and optional "mercari_query" keys.
   """
   channel = bot.get_channel(brand["channel_id"])
   if channel is None:
@@ -96,15 +96,21 @@ async def poll(bot, brand):
 
   m = Mercapi()
 
+  brand_ids = brand.get("mercari_brand_ids") or []
+
+  query = "" if brand_ids else (
+    brand.get("mercari_query") or brand["name"]
+  )
+
   results = await m.search(
-      '',                              # Empty - filters by brand id
-      brands=brand["mercari_brand_ids"],
-      sort_by=SearchRequestData.SortBy.SORT_CREATED_TIME,
-      sort_order=SearchRequestData.SortOrder.ORDER_DESC,
+    query,
+    brands=brand_ids,
+    sort_by=SearchRequestData.SortBy.SORT_CREATED_TIME,
+    sort_order=SearchRequestData.SortOrder.ORDER_DESC,
   )
 
   for item in results.items:
-    listing_id = item.id_ 
+    listing_id = str(item.id_)
 
     if listing_id in seen:
       continue
